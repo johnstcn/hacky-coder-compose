@@ -1,0 +1,94 @@
+services:
+  coder:
+    image: ${CODER_IMAGE:-ghcr.io/coder/coder:latest}
+    ports:
+      - "7080:7080"
+      - "2112:2112"
+    environment:
+      CODER_PG_CONNECTION_URL: "postgresql://${POSTGRES_USER:-coder}:${POSTGRES_PASSWORD:-coder}@database/${POSTGRES_DB:-coder}?sslmode=disable"
+      CODER_HTTP_ADDRESS: "0.0.0.0:7080"
+      CODER_ACCESS_URL: "http://localhost:7080"
+      CODER_TELEMETRY_ENABLE: "false"
+      CODER_PROMETHEUS_ENABLE: "true"
+      CODER_PROMETHEUS_ADDRESS: "0.0.0.0:2112"
+      CODER_PROMETHEUS_COLLECT_DB_METRICS: "true"
+      CODER_PROVISIONER_DAEMONS: "${CODER_PROVISIONER_DAEMONS:-3}"
+    group_add:
+      - "971" # docker group on host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7080/api/v2/buildinfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coder_data:/home/coder
+    depends_on:
+      database:
+        condition: service_healthy
+  database:
+    image: "postgres:16"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-coder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coder}
+      POSTGRES_DB: ${POSTGRES_DB:-coder}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-coder} -d ${POSTGRES_DB:-coder}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./config/prometheus:/etc/prometheus/
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_URI: "database:5432/${POSTGRES_DB:-coder}?sslmode=disable"
+      DATA_SOURCE_USER: "${POSTGRES_USER:-coder}"
+      DATA_SOURCE_PASS: "${POSTGRES_PASSWORD:-coder}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9187/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "9187:9187"
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana:/etc/grafana/provisioning
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  postgres_data: {}
+  coder_data: {}
